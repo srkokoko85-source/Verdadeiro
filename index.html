@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=landscape">
+    <title>Spider Nest Defender - Wildlife Edition</title>
+    <style>
+        :root {
+            --forest-dark: #1a2f1a;
+            --web-color: rgba(255, 255, 255, 0.2);
+            --ui-bg: rgba(0, 0, 0, 0.7);
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--forest-dark);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle, #2d4a2d 0%, #1a2f1a 100%);
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .hud-top {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: auto;
+        }
+
+        .stat-box {
+            background: var(--ui-bg);
+            padding: 8px 15px;
+            border-radius: 15px;
+            border: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+            min-width: 100px;
+        }
+
+        .level-badge {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffcc00;
+        }
+
+        .egg-timer {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: var(--ui-bg);
+            padding: 10px;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid #fff;
+            /* Pointer events none para o player não interagir com o timer */
+            pointer-events: none;
+        }
+
+        #msg-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--ui-bg);
+            padding: 20px;
+            border-radius: 20px;
+            text-align: center;
+            display: none;
+            pointer-events: auto;
+            border: 2px solid #ffcc00;
+        }
+
+        button {
+            background: #ffcc00;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+            border-radius: 5px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+
+        @media (orientation: portrait) {
+            #portrait-warning {
+                display: flex;
+            }
+        }
+
+        #portrait-warning {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="portrait-warning">
+        <h2>Por favor, gire o celular para o modo Paisagem (Landscape) para jogar!</h2>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="ui-layer">
+            <div class="hud-top">
+                <div class="stat-box">
+                    <span>NÍVEL</span>
+                    <span id="player-lvl" class="level-badge">1</span>
+                </div>
+                <div class="stat-box">
+                    <span>VITALIDADE</span>
+                    <span id="player-hp" style="color: #ff4444; font-weight: bold;">100%</span>
+                </div>
+            </div>
+
+            <div class="egg-timer">
+                <div>PRÓXIMA NINHADA</div>
+                <div id="timer-display" style="font-size: 20px; font-weight: bold;">08:00</div>
+                <div id="spider-bots-count" style="font-size: 12px;">Mini-aranhas: 0</div>
+            </div>
+
+            <div id="msg-box">
+                <h2 id="msg-title">VOCÊ MORREU</h2>
+                <p id="msg-desc">A natureza foi mais forte desta vez.</p>
+                <button onclick="restartGame()">RECOMEÇAR</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const playerLvlEl = document.getElementById('player-lvl');
+    const playerHpEl = document.getElementById('player-hp');
+    const timerDisplay = document.getElementById('timer-display');
+    const botCountEl = document.getElementById('spider-bots-count');
+    const msgBox = document.getElementById('msg-box');
+
+    let width, height;
+    let player, enemies, bots;
+    let eggTime = 8 * 60; // 8 minutes
+    let currentTime = eggTime;
+    let gameActive = true;
+
+    const SPECIES = [
+        { name: 'Mosca', color: '#555', speedMult: 1.2, hpMult: 0.8, weight: 40, type: 'fly' },
+        { name: 'Besouro', color: '#1a1a1a', speedMult: 0.6, hpMult: 2.0, weight: 20, type: 'beetle' },
+        { name: 'Vespa', color: '#ffd700', speedMult: 1.8, hpMult: 1.2, weight: 15, type: 'wasp' },
+        { name: 'Borboleta', color: '#ff69b4', speedMult: 0.5, hpMult: 1.5, weight: 15, type: 'butterfly' },
+        { name: 'Joaninha', color: '#ff0000', speedMult: 0.8, hpMult: 2.5, weight: 10, type: 'ladybug' }
+    ];
+
+    function init() {
+        resize();
+        player = {
+            x: width / 2,
+            y: height / 2,
+            targetX: width / 2,
+            targetY: height / 2,
+            radius: 20,
+            level: 1,
+            hp: 100,
+            maxHp: 100,
+            speed: 4,
+            xp: 0,
+            angle: 0
+        };
+        enemies = [];
+        bots = [];
+        currentTime = eggTime;
+        gameActive = true;
+        msgBox.style.display = 'none';
+        
+        for(let i=0; i<6; i++) spawnEnemy();
+    }
+
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+    }
+
+    window.addEventListener('resize', resize);
+
+    canvas.addEventListener('pointerdown', (e) => {
+        if (!gameActive) return;
+        player.targetX = e.clientX;
+        player.targetY = e.clientY;
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+        if (gameActive && e.buttons > 0) {
+            player.targetX = e.clientX;
+            player.targetY = e.clientY;
+        }
+    });
+
+    function getRandomSpecies() {
+        let totalWeight = SPECIES.reduce((sum, s) => sum + s.weight, 0);
+        let random = Math.random() * totalWeight;
+        for (let s of SPECIES) {
+            if (random < s.weight) return s;
+            random -= s.weight;
+        }
+        return SPECIES[0];
+    }
+
+    function spawnEnemy() {
+        const side = Math.floor(Math.random() * 4);
+        let x, y;
+        if (side === 0) { x = -50; y = Math.random() * height; }
+        else if (side === 1) { x = width + 50; y = Math.random() * height; }
+        else if (side === 2) { x = Math.random() * width; y = -50; }
+        else { x = Math.random() * width; y = height + 50; }
+
+        const species = getRandomSpecies();
+        const level = Math.max(1, Math.floor(player.level + (Math.random() * 5 - 2)));
+        
+        enemies.push({
+            x, y,
+            level,
+            species: species,
+            radius: 12 + (level * 1.5),
+            speed: (0.7 + Math.random() * 1) * species.speedMult,
+            angle: 0,
+            hp: (10 + (level * 8)) * species.hpMult
+        });
+    }
+
+    function spawnBot() {
+        bots.push({
+            x: width - 80,
+            y: height - 80,
+            radius: 10,
+            speed: 3.5,
+            kills: 0,
+            angle: 0
+        });
+    }
+
+    function drawWeb() {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 1;
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        for (let i = 0; i < 16; i++) {
+            const angle = (i / 16) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(centerX + Math.cos(angle) * width, centerY + Math.sin(angle) * width);
+            ctx.stroke();
+        }
+
+        for (let r = 40; r < width; r += 50) {
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+
+    function drawSpider(x, y, radius, angle, color = "black") {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        
+        ctx.strokeStyle = color;
+        ctx.lineWidth = radius / 6;
+        for(let i=0; i<8; i++){
+            const legAngle = (i/8) * Math.PI * 2 + Math.sin(Date.now()*0.015)*0.25;
+            ctx.beginPath();
+            ctx.moveTo(0,0);
+            ctx.lineTo(Math.cos(legAngle) * radius * 1.6, Math.sin(legAngle) * radius * 1.6);
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "red";
+        ctx.beginPath();
+        ctx.arc(-radius/3, -radius/3, radius/6, 0, Math.PI*2);
+        ctx.arc(radius/3, -radius/3, radius/6, 0, Math.PI*2);
+        ctx.fill();
+        
+        ctx.restore();
+    }
+
+    function drawEnemy(enemy) {
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        ctx.rotate(enemy.angle);
+        
+        const r = enemy.radius;
+        const type = enemy.species.type;
+
+        if (type === 'wasp') {
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, r * 1.2, r * 0.6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffd700';
+            ctx.fillRect(-r*0.5, -r*0.6, r*0.3, r*1.2);
+            ctx.fillRect(r*0.2, -r*0.6, r*0.3, r*1.2);
+        } else if (type === 'ladybug') {
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath(); ctx.arc(-r/3, -r/3, r/5, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(r/3, r/4, r/5, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(0, 0, r/5, 0, Math.PI*2); ctx.fill();
+        } else if (type === 'butterfly') {
+            ctx.fillStyle = enemy.species.color;
+            ctx.beginPath();
+            ctx.ellipse(-r, 0, r, r*1.5, Math.PI/6, 0, Math.PI*2);
+            ctx.ellipse(r, 0, r, r*1.5, -Math.PI/6, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = '#222';
+            ctx.fillRect(-r*0.2, -r, r*0.4, r*2);
+        } else {
+            ctx.fillStyle = enemy.species.color;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, r, r * 0.7, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        if (type !== 'ladybug' && type !== 'beetle') {
+            ctx.fillStyle = "rgba(255,255,255,0.3)";
+            const wingAnim = Math.sin(Date.now() * 0.05) * 0.5;
+            ctx.beginPath();
+            ctx.ellipse(0, -r*0.8, r * (1+wingAnim), r * 0.4, 0, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        ctx.restore();
+        ctx.fillStyle = enemy.level > player.level ? "#ff4444" : "#44ff44";
+        ctx.font = "bold 14px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Lvl " + enemy.level, enemy.x, enemy.y + r + 15);
+    }
+
+    function update() {
+        if (!gameActive) return;
+
+        // Player movement
+        const dx = player.targetX - player.x;
+        const dy = player.targetY - player.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > 5) {
+            player.x += (dx / dist) * player.speed;
+            player.y += (dy / dist) * player.speed;
+            player.angle = Math.atan2(dy, dx) + Math.PI/2;
+        }
+
+        // Enemies
+        enemies.forEach((en, index) => {
+            const targetX = width / 2;
+            const targetY = height / 2;
+            const edx = targetX - en.x;
+            const edy = targetY - en.y;
+            const edist = Math.sqrt(edx*edx + edy*edy);
+            
+            en.x += (edx / edist) * en.speed;
+            en.y += (edy / edist) * en.speed;
+            en.angle = Math.atan2(edy, edx);
+
+            const pdist = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
+            if (pdist < player.radius + en.radius) {
+                if (player.level >= en.level) {
+                    player.xp += en.level * 15;
+                    enemies.splice(index, 1);
+                    if (player.xp >= player.level * 60) {
+                        player.level++;
+                        player.xp = 0;
+                        player.speed = Math.min(7, player.speed + 0.15);
+                    }
+                } else {
+                    player.hp -= 0.8;
+                    if (player.hp <= 0) gameOver();
+                }
+            }
+        });
+
+        // Bots logic
+        bots.forEach((bot, bIndex) => {
+            let nearest = null;
+            let minDist = Infinity;
+            enemies.forEach(en => {
+                const d = Math.sqrt((bot.x-en.x)**2 + (bot.y-en.y)**2);
+                if (d < minDist) { minDist = d; nearest = en; }
+            });
+
+            if (nearest && minDist < 400) {
+                const bdx = nearest.x - bot.x;
+                const bdy = nearest.y - bot.y;
+                const bdist = Math.sqrt(bdx*bdx + bdy*bdy);
+                bot.x += (bdx / bdist) * bot.speed;
+                bot.y += (bdy / bdist) * bot.speed;
+                bot.angle = Math.atan2(bdy, bdx) + Math.PI/2;
+
+                if (bdist < bot.radius + nearest.radius) {
+                    enemies.splice(enemies.indexOf(nearest), 1);
+                    bot.kills++;
+                    if(bot.kills > 4) bots.splice(bIndex, 1);
+                }
+            } else {
+                const ndx = (width-80) - bot.x;
+                const ndy = (height-80) - bot.y;
+                const ndist = Math.sqrt(ndx*ndx + ndy*ndy);
+                if(ndist > 20) {
+                    bot.x += (ndx / ndist) * (bot.speed * 0.6);
+                    bot.y += (ndy / ndist) * (bot.speed * 0.6);
+                    bot.angle = Math.atan2(ndy, ndx) + Math.PI/2;
+                }
+            }
+        });
+
+        if (enemies.length < 6 + player.level) {
+            if (Math.random() < 0.03) spawnEnemy();
+        }
+
+        // Egg Timer countdown
+        currentTime -= (1/60);
+        if (currentTime <= 0) {
+            for(let i=0; i<3; i++) spawnBot();
+            currentTime = eggTime;
+        }
+
+        updateUI();
+    }
+
+    function updateUI() {
+        playerLvlEl.innerText = player.level;
+        playerHpEl.innerText = Math.max(0, Math.ceil(player.hp)) + "%";
+        
+        const mins = Math.floor(currentTime / 60);
+        const secs = Math.floor(currentTime % 60);
+        timerDisplay.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        botCountEl.innerText = "Mini-aranhas: " + bots.length;
+    }
+
+    function gameOver() {
+        gameActive = false;
+        msgBox.style.display = 'block';
+    }
+
+    function restartGame() {
+        init();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, width, height);
+        drawWeb();
+
+        // Eggs visual
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        for(let i=0; i<3; i++) {
+            ctx.beginPath();
+            ctx.ellipse(width - 60 - (i*12), height - 60, 10, 14, Math.PI/4, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        enemies.forEach(drawEnemy);
+        bots.forEach(b => drawSpider(b.x, b.y, b.radius, b.angle, "#888"));
+        drawSpider(player.x, player.y, player.radius, player.angle);
+
+        requestAnimationFrame(draw);
+        update();
+    }
+
+    init();
+    draw();
+
+</script>
+</body>
+</html>
+
