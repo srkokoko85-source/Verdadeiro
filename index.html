@@ -79,7 +79,6 @@
             border-radius: 10px;
             text-align: center;
             border: 2px solid #fff;
-            /* Pointer events none para o player não interagir com o timer */
             pointer-events: none;
         }
 
@@ -108,6 +107,14 @@
             cursor: pointer;
         }
 
+        #rain-status {
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #44aaff;
+            display: none;
+        }
+
         @media (orientation: portrait) {
             #portrait-warning {
                 display: flex;
@@ -133,7 +140,7 @@
 <body>
 
     <div id="portrait-warning">
-        <h2>Por favor, gire o celular para o modo Paisagem (Landscape) para jogar!</h2>
+        <h2>Por favor, gire o telemóvel para o modo Paisagem para jogar!</h2>
     </div>
 
     <div id="game-container">
@@ -146,6 +153,7 @@
                     <span id="player-lvl" class="level-badge">1</span>
                 </div>
                 <div class="stat-box">
+                    <div id="rain-status">ESTÁ A CHOVER!</div>
                     <span>VITALIDADE</span>
                     <span id="player-hp" style="color: #ff4444; font-weight: bold;">100%</span>
                 </div>
@@ -154,11 +162,12 @@
             <div class="egg-timer">
                 <div>PRÓXIMA NINHADA</div>
                 <div id="timer-display" style="font-size: 20px; font-weight: bold;">08:00</div>
+                <div id="egg-hp-display" style="font-size: 11px; color: #ff8888;">Ovos: 100%</div>
                 <div id="spider-bots-count" style="font-size: 12px;">Mini-aranhas: 0</div>
             </div>
 
             <div id="msg-box">
-                <h2 id="msg-title">VOCÊ MORREU</h2>
+                <h2 id="msg-title">MORRESTE</h2>
                 <p id="msg-desc">A natureza foi mais forte desta vez.</p>
                 <button onclick="restartGame()">RECOMEÇAR</button>
             </div>
@@ -172,20 +181,36 @@
     const playerHpEl = document.getElementById('player-hp');
     const timerDisplay = document.getElementById('timer-display');
     const botCountEl = document.getElementById('spider-bots-count');
+    const eggHpEl = document.getElementById('egg-hp-display');
+    const rainStatusEl = document.getElementById('rain-status');
     const msgBox = document.getElementById('msg-box');
 
     let width, height;
     let player, enemies, bots;
-    let eggTime = 8 * 60; // 8 minutes
+    let eggTime = 8 * 60; 
     let currentTime = eggTime;
     let gameActive = true;
+    let eggHealth = 100;
+    let eggMaxHealth = 100;
+
+    let isRaining = false;
+    let rainTimer = 0;
+    let rainDrops = [];
+    let playerVelX = 0;
+    let playerVelY = 0;
+    let frogTongues = [];
 
     const SPECIES = [
         { name: 'Mosca', color: '#555', speedMult: 1.2, hpMult: 0.8, weight: 40, type: 'fly' },
         { name: 'Besouro', color: '#1a1a1a', speedMult: 0.6, hpMult: 2.0, weight: 20, type: 'beetle' },
         { name: 'Vespa', color: '#ffd700', speedMult: 1.8, hpMult: 1.2, weight: 15, type: 'wasp' },
         { name: 'Borboleta', color: '#ff69b4', speedMult: 0.5, hpMult: 1.5, weight: 15, type: 'butterfly' },
-        { name: 'Joaninha', color: '#ff0000', speedMult: 0.8, hpMult: 2.5, weight: 10, type: 'ladybug' }
+        { name: 'Joaninha', color: '#ff0000', speedMult: 0.8, hpMult: 2.5, weight: 10, type: 'ladybug' },
+        { name: 'Centopeia', color: '#8b4513', speedMult: 0.4, hpMult: 3.0, weight: 10, type: 'centipede' },
+        { name: 'Treme-Treme', color: '#add8e6', speedMult: 2.5, hpMult: 0.5, weight: 10, type: 'shaker' },
+        { name: 'Vespa Cavalo do Cão', color: '#ff4500', speedMult: 1.4, hpMult: 4.0, weight: 8, type: 'tarantula_hawk' },
+        { name: 'Sapo', color: '#4d7c0f', speedMult: 0.6, hpMult: 0.5, weight: 12, type: 'frog' },
+        { name: 'Chicken Jockey', color: '#ffffff', speedMult: 2.2, hpMult: 1.2, weight: 0.5, type: 'chicken_jockey' }
     ];
 
     function init() {
@@ -203,12 +228,18 @@
             xp: 0,
             angle: 0
         };
+        playerVelX = 0;
+        playerVelY = 0;
         enemies = [];
         bots = [];
+        rainDrops = [];
+        frogTongues = [];
         currentTime = eggTime;
+        eggHealth = 100;
         gameActive = true;
+        isRaining = false;
+        rainTimer = 0;
         msgBox.style.display = 'none';
-        
         for(let i=0; i<6; i++) spawnEnemy();
     }
 
@@ -254,7 +285,6 @@
 
         const species = getRandomSpecies();
         const level = Math.max(1, Math.floor(player.level + (Math.random() * 5 - 2)));
-        
         enemies.push({
             x, y,
             level,
@@ -262,7 +292,9 @@
             radius: 12 + (level * 1.5),
             speed: (0.7 + Math.random() * 1) * species.speedMult,
             angle: 0,
-            hp: (10 + (level * 8)) * species.hpMult
+            hp: (10 + (level * 8)) * species.hpMult,
+            aggroPlayer: false,
+            lastAtk: 0
         });
     }
 
@@ -282,7 +314,6 @@
         ctx.lineWidth = 1;
         const centerX = width / 2;
         const centerY = height / 2;
-
         for (let i = 0; i < 16; i++) {
             const angle = (i / 16) * Math.PI * 2;
             ctx.beginPath();
@@ -290,7 +321,6 @@
             ctx.lineTo(centerX + Math.cos(angle) * width, centerY + Math.sin(angle) * width);
             ctx.stroke();
         }
-
         for (let r = 40; r < width; r += 50) {
             ctx.beginPath();
             ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
@@ -302,218 +332,212 @@
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(angle);
-        
         ctx.strokeStyle = color;
         ctx.lineWidth = radius / 6;
         for(let i=0; i<8; i++){
             const legAngle = (i/8) * Math.PI * 2 + Math.sin(Date.now()*0.015)*0.25;
-            ctx.beginPath();
-            ctx.moveTo(0,0);
+            ctx.beginPath(); ctx.moveTo(0,0);
             ctx.lineTo(Math.cos(legAngle) * radius * 1.6, Math.sin(legAngle) * radius * 1.6);
             ctx.stroke();
         }
-
         ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-
+        ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = "red";
-        ctx.beginPath();
-        ctx.arc(-radius/3, -radius/3, radius/6, 0, Math.PI*2);
-        ctx.arc(radius/3, -radius/3, radius/6, 0, Math.PI*2);
-        ctx.fill();
-        
+        ctx.beginPath(); ctx.arc(-radius/3, -radius/3, radius/6, 0, Math.PI*2);
+        ctx.arc(radius/3, -radius/3, radius/6, 0, Math.PI*2); ctx.fill();
         ctx.restore();
     }
 
     function drawEnemy(enemy) {
+        let offsetX = 0;
+        let offsetY = 0;
+        if (enemy.species.type === 'shaker') {
+            offsetX = (Math.random() - 0.5) * 10;
+            offsetY = (Math.random() - 0.5) * 10;
+        }
+
         ctx.save();
-        ctx.translate(enemy.x, enemy.y);
+        ctx.translate(enemy.x + offsetX, enemy.y + offsetY);
         ctx.rotate(enemy.angle);
-        
         const r = enemy.radius;
         const type = enemy.species.type;
 
         if (type === 'wasp') {
-            ctx.fillStyle = '#000';
-            ctx.beginPath();
-            ctx.ellipse(0, 0, r * 1.2, r * 0.6, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#ffd700';
-            ctx.fillRect(-r*0.5, -r*0.6, r*0.3, r*1.2);
-            ctx.fillRect(r*0.2, -r*0.6, r*0.3, r*1.2);
+            ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(0, 0, r * 1.2, r * 0.6, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#ffd700'; ctx.fillRect(-r*0.5, -r*0.6, r*0.3, r*1.2); ctx.fillRect(r*0.2, -r*0.6, r*0.3, r*1.2);
         } else if (type === 'ladybug') {
-            ctx.fillStyle = 'red';
-            ctx.beginPath();
-            ctx.arc(0, 0, r, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = 'black';
             ctx.beginPath(); ctx.arc(-r/3, -r/3, r/5, 0, Math.PI*2); ctx.fill();
             ctx.beginPath(); ctx.arc(r/3, r/4, r/5, 0, Math.PI*2); ctx.fill();
             ctx.beginPath(); ctx.arc(0, 0, r/5, 0, Math.PI*2); ctx.fill();
         } else if (type === 'butterfly') {
             ctx.fillStyle = enemy.species.color;
-            ctx.beginPath();
-            ctx.ellipse(-r, 0, r, r*1.5, Math.PI/6, 0, Math.PI*2);
-            ctx.ellipse(r, 0, r, r*1.5, -Math.PI/6, 0, Math.PI*2);
-            ctx.fill();
-            ctx.fillStyle = '#222';
-            ctx.fillRect(-r*0.2, -r, r*0.4, r*2);
-        } else {
+            ctx.beginPath(); ctx.ellipse(-r, 0, r, r*1.5, Math.PI/6, 0, Math.PI*2); ctx.ellipse(r, 0, r, r*1.5, -Math.PI/6, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#222'; ctx.fillRect(-r*0.2, -r, r*0.4, r*2);
+        } else if (type === 'centipede') {
             ctx.fillStyle = enemy.species.color;
-            ctx.beginPath();
-            ctx.ellipse(0, 0, r, r * 0.7, 0, 0, Math.PI * 2);
-            ctx.fill();
+            for(let i=0; i<5; i++) {
+                ctx.beginPath(); ctx.arc(-i * (r*0.8), 0, r * 0.8, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = enemy.species.color; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-i * (r*0.8), r*0.5); ctx.lineTo(-i * (r*0.8) - r*0.3, r*1.2);
+                ctx.moveTo(-i * (r*0.8), -r*0.5); ctx.lineTo(-i * (r*0.8) - r*0.3, -r*1.2); ctx.stroke();
+            }
+        } else if (type === 'shaker') {
+            ctx.strokeStyle = enemy.species.color; ctx.lineWidth = 1.5;
+            for(let i=0; i<8; i++){
+                const legAngle = (i/8) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(legAngle) * r * 2.5, Math.sin(legAngle) * r * 2.5); ctx.stroke();
+            }
+            ctx.fillStyle = enemy.species.color; ctx.beginPath(); ctx.arc(0, 0, r * 0.6, 0, Math.PI * 2); ctx.fill();
+        } else if (type === 'tarantula_hawk') {
+            ctx.fillStyle = '#1a1a3a'; ctx.beginPath(); ctx.ellipse(0, 0, r * 1.5, r * 0.6, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#ff4500'; const wingAnim = Math.sin(Date.now() * 0.1) * 0.6;
+            ctx.beginPath(); ctx.ellipse(-r*0.2, -r*0.8, r * 1.8, r * 0.5, -0.4 + wingAnim, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(r*1.2, 0); ctx.lineTo(r*1.8, 0); ctx.stroke();
+        } else if (type === 'frog') {
+            ctx.fillStyle = '#4d7c0f'; ctx.beginPath(); ctx.ellipse(0, 0, r * 1.3, r, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(-r*0.4, -r*0.5, r*0.3, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(r*0.4, -r*0.5, r*0.3, 0, Math.PI*2); ctx.fill();
+        } else if (type === 'chicken_jockey') {
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(0, 0, r, r*0.7, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(r*0.8, -r*0.3, r*0.4, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = 'orange'; ctx.fillRect(r*1.1, -r*0.4, r*0.3, r*0.2);
+            ctx.fillStyle = 'red'; ctx.fillRect(r*0.7, -r*0.8, r*0.2, r*0.2);
+            ctx.fillStyle = '#2e8b57'; ctx.fillRect(-r*0.3, -r*1.2, r*0.6, r*0.7);
+            ctx.fillStyle = '#3a5fbd'; ctx.fillRect(-r*0.2, -r*0.5, r*0.4, r*0.3);
+        } else {
+            ctx.fillStyle = enemy.species.color; ctx.beginPath(); ctx.ellipse(0, 0, r, r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
         }
         
-        if (type !== 'ladybug' && type !== 'beetle') {
-            ctx.fillStyle = "rgba(255,255,255,0.3)";
-            const wingAnim = Math.sin(Date.now() * 0.05) * 0.5;
-            ctx.beginPath();
-            ctx.ellipse(0, -r*0.8, r * (1+wingAnim), r * 0.4, 0, 0, Math.PI*2);
-            ctx.fill();
+        if (type !== 'ladybug' && type !== 'beetle' && type !== 'centipede' && type !== 'shaker' && type !== 'tarantula_hawk' && type !== 'frog' && type !== 'chicken_jockey') {
+            ctx.fillStyle = "rgba(255,255,255,0.3)"; const wingAnim = Math.sin(Date.now() * 0.05) * 0.5;
+            ctx.beginPath(); ctx.ellipse(0, -r*0.8, r * (1+wingAnim), r * 0.4, 0, 0, Math.PI*2); ctx.fill();
         }
-
         ctx.restore();
-        ctx.fillStyle = enemy.level > player.level ? "#ff4444" : "#44ff44";
-        ctx.font = "bold 14px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText("Lvl " + enemy.level, enemy.x, enemy.y + r + 15);
+        ctx.fillStyle = enemy.level > player.level ? "#ff4444" : "#44ff44"; ctx.font = "bold 14px Arial"; ctx.textAlign = "center";
+        ctx.fillText("Lvl " + enemy.level, enemy.x + offsetX, enemy.y + r + 15 + offsetY);
     }
 
     function update() {
         if (!gameActive) return;
+        rainTimer++;
+        if (rainTimer > 1500) { isRaining = !isRaining; rainTimer = 0; rainStatusEl.style.display = isRaining ? "block" : "none"; }
+        if (isRaining) {
+            if (rainDrops.length < 150) rainDrops.push({ x: Math.random() * width, y: -20, speed: 12 + Math.random() * 8 });
+            rainDrops.forEach((d, i) => { d.y += d.speed; if (d.y > height) rainDrops.splice(i, 1); });
+        } else { rainDrops = []; }
 
-        // Player movement
-        const dx = player.targetX - player.x;
-        const dy = player.targetY - player.y;
+        const dx = player.targetX - player.x; const dy = player.targetY - player.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist > 5) {
-            player.x += (dx / dist) * player.speed;
-            player.y += (dy / dist) * player.speed;
-            player.angle = Math.atan2(dy, dx) + Math.PI/2;
+        if (isRaining) {
+            if (dist > 5) { playerVelX += (dx/dist)*0.15; playerVelY += (dy/dist)*0.15; }
+            playerVelX *= 0.985; playerVelY *= 0.985;
+        } else {
+            if (dist > 5) { playerVelX = (dx/dist)*player.speed; playerVelY = (dy/dist)*player.speed; }
+            else { playerVelX *= 0.5; playerVelY *= 0.5; }
         }
+        player.x += playerVelX; player.y += playerVelY;
+        if (Math.abs(playerVelX) > 0.1 || Math.abs(playerVelY) > 0.1) player.angle = Math.atan2(playerVelY, playerVelX) + Math.PI/2;
+        if(player.x < 0) player.x = 0; if(player.x > width) player.x = width; if(player.y < 0) player.y = 0; if(player.y > height) player.y = height;
 
-        // Enemies
         enemies.forEach((en, index) => {
-            const targetX = width / 2;
-            const targetY = height / 2;
-            const edx = targetX - en.x;
-            const edy = targetY - en.y;
-            const edist = Math.sqrt(edx*edx + edy*edy);
+            let tX = width/2; let tY = height/2;
+            let currentS = en.speed; if (isRaining) currentS *= 0.55;
+
+            if (en.species.type === 'tarantula_hawk' && !en.aggroPlayer) {
+                tX = width - 60; tY = height - 60;
+                const dE = Math.sqrt((en.x - tX)**2 + (en.y - tY)**2);
+                if (dE < en.radius + 30) { 
+                    eggHealth -= 0.05; 
+                    tX = en.x; tY = en.y;
+                    // Correção do Bug: Se a vida dos ovos acabar, o jogo termina
+                    if (eggHealth <= 0) { eggHealth = 0; gameOver(); }
+                }
+            } else if (en.species.type === 'frog') {
+                const dP = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
+                if (dP < 300) {
+                    tX = en.x; tY = en.y;
+                    if (Date.now() - en.lastAtk > 2000) {
+                        const ang = Math.atan2(player.y - en.y, player.x - en.x);
+                        frogTongues.push({ x: en.x, y: en.y, vx: Math.cos(ang)*6, vy: Math.sin(ang)*6, life: 90 });
+                        en.lastAtk = Date.now();
+                    }
+                } else { tX = player.x; tY = player.y; }
+            } else { tX = player.x; tY = player.y; }
             
-            en.x += (edx / edist) * en.speed;
-            en.y += (edy / edist) * en.speed;
-            en.angle = Math.atan2(edy, edx);
+            const edx = tX - en.x; const edy = tY - en.y; const edist = Math.sqrt(edx*edx + edy*edy);
+            if (edist > 2) { en.x += (edx/edist)*currentS; en.y += (edy/edist)*currentS; en.angle = Math.atan2(edy, edx); }
 
             const pdist = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
             if (pdist < player.radius + en.radius) {
                 if (player.level >= en.level) {
-                    player.xp += en.level * 15;
-                    enemies.splice(index, 1);
-                    if (player.xp >= player.level * 60) {
-                        player.level++;
-                        player.xp = 0;
-                        player.speed = Math.min(7, player.speed + 0.15);
-                    }
+                    player.xp += en.level * 15; enemies.splice(index, 1);
+                    if (player.xp >= player.level * 60) { player.level++; player.xp = 0; player.speed = Math.min(7, player.speed + 0.15); }
                 } else {
-                    player.hp -= 0.8;
-                    if (player.hp <= 0) gameOver();
+                    if (en.species.type === 'tarantula_hawk') en.aggroPlayer = true;
+                    player.hp -= 0.8; if (player.hp <= 0) gameOver();
                 }
             }
         });
 
-        // Bots logic
-        bots.forEach((bot, bIndex) => {
-            let nearest = null;
-            let minDist = Infinity;
-            enemies.forEach(en => {
-                const d = Math.sqrt((bot.x-en.x)**2 + (bot.y-en.y)**2);
-                if (d < minDist) { minDist = d; nearest = en; }
-            });
+        frogTongues.forEach((t, i) => {
+            t.x += t.vx; t.y += t.vy; t.life--;
+            if (Math.sqrt((t.x-player.x)**2 + (t.y-player.y)**2) < player.radius) { player.hp -= 3; frogTongues.splice(i, 1); if(player.hp <= 0) gameOver(); }
+            if (t.life <= 0) frogTongues.splice(i, 1);
+        });
 
-            if (nearest && minDist < 400) {
-                const bdx = nearest.x - bot.x;
-                const bdy = nearest.y - bot.y;
-                const bdist = Math.sqrt(bdx*bdx + bdy*bdy);
-                bot.x += (bdx / bdist) * bot.speed;
-                bot.y += (bdy / bdist) * bot.speed;
-                bot.angle = Math.atan2(bdy, bdx) + Math.PI/2;
-
-                if (bdist < bot.radius + nearest.radius) {
-                    enemies.splice(enemies.indexOf(nearest), 1);
-                    bot.kills++;
-                    if(bot.kills > 4) bots.splice(bIndex, 1);
-                }
+        bots.forEach((bot, bI) => {
+            let near = null; let mD = Infinity;
+            enemies.forEach(en => { const d = Math.sqrt((bot.x-en.x)**2 + (bot.y-en.y)**2); if(d < mD){ mD = d; near = en; }});
+            if (near && mD < 400) {
+                const bdx = near.x-bot.x; const bdy = near.y-bot.y; const bd = Math.sqrt(bdx*bdx+bdy*bdy);
+                bot.x += (bdx/bd)*bot.speed; bot.y += (bdy/bd)*bot.speed; bot.angle = Math.atan2(bdy, bdx)+Math.PI/2;
+                if(bd < bot.radius+near.radius){ enemies.splice(enemies.indexOf(near), 1); bot.kills++; if(bot.kills > 4) bots.splice(bI, 1); }
             } else {
-                const ndx = (width-80) - bot.x;
-                const ndy = (height-80) - bot.y;
-                const ndist = Math.sqrt(ndx*ndx + ndy*ndy);
-                if(ndist > 20) {
-                    bot.x += (ndx / ndist) * (bot.speed * 0.6);
-                    bot.y += (ndy / ndist) * (bot.speed * 0.6);
-                    bot.angle = Math.atan2(ndy, ndx) + Math.PI/2;
-                }
+                const nx = (width-80)-bot.x; const ny = (height-80)-bot.y; const nd = Math.sqrt(nx*nx+ny*ny);
+                if(nd > 20){ bot.x += (nx/nd)*2.1; bot.y += (ny/nd)*2.1; bot.angle = Math.atan2(ny, nx)+Math.PI/2; }
             }
         });
 
-        if (enemies.length < 6 + player.level) {
-            if (Math.random() < 0.03) spawnEnemy();
-        }
-
-        // Egg Timer countdown
+        if (enemies.length < 6 + player.level && Math.random() < 0.03) spawnEnemy();
         currentTime -= (1/60);
         if (currentTime <= 0) {
-            for(let i=0; i<3; i++) spawnBot();
-            currentTime = eggTime;
+            let nS = Math.ceil(3 * (eggHealth / eggMaxHealth)); for(let i=0; i<nS; i++) spawnBot();
+            currentTime = eggTime; eggHealth = eggMaxHealth; 
         }
-
         updateUI();
     }
 
     function updateUI() {
-        playerLvlEl.innerText = player.level;
-        playerHpEl.innerText = Math.max(0, Math.ceil(player.hp)) + "%";
-        
-        const mins = Math.floor(currentTime / 60);
-        const secs = Math.floor(currentTime % 60);
-        timerDisplay.innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        playerLvlEl.innerText = player.level; playerHpEl.innerText = Math.max(0, Math.ceil(player.hp)) + "%";
+        eggHpEl.innerText = "Ovos: " + Math.ceil(eggHealth) + "%";
+        const m = Math.floor(currentTime/60); const s = Math.floor(currentTime%60);
+        timerDisplay.innerText = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         botCountEl.innerText = "Mini-aranhas: " + bots.length;
     }
 
-    function gameOver() {
-        gameActive = false;
-        msgBox.style.display = 'block';
-    }
-
-    function restartGame() {
-        init();
-    }
+    function gameOver() { gameActive = false; msgBox.style.display = 'block'; }
+    function restartGame() { init(); }
 
     function draw() {
         ctx.clearRect(0, 0, width, height);
         drawWeb();
-
-        // Eggs visual
-        ctx.fillStyle = "rgba(255,255,255,0.8)";
-        for(let i=0; i<3; i++) {
-            ctx.beginPath();
-            ctx.ellipse(width - 60 - (i*12), height - 60, 10, 14, Math.PI/4, 0, Math.PI*2);
-            ctx.fill();
-        }
-
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.2 + (eggHealth/100) * 0.6})`;
+        let eC = Math.ceil(3 * (eggHealth / eggMaxHealth));
+        for(let i=0; i<eC; i++) { ctx.beginPath(); ctx.ellipse(width-60-(i*12), height-60, 10, 14, Math.PI/4, 0, Math.PI*2); ctx.fill(); }
         enemies.forEach(drawEnemy);
+        frogTongues.forEach(t => { ctx.fillStyle = "#ff6666"; ctx.beginPath(); ctx.arc(t.x, t.y, 4, 0, Math.PI*2); ctx.fill(); });
         bots.forEach(b => drawSpider(b.x, b.y, b.radius, b.angle, "#888"));
         drawSpider(player.x, player.y, player.radius, player.angle);
-
+        if (isRaining) {
+            ctx.strokeStyle = "rgba(174, 194, 255, 0.4)"; ctx.lineWidth = 1;
+            rainDrops.forEach(d => { ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x, d.y + 12); ctx.stroke(); });
+            ctx.fillStyle = "rgba(0, 50, 100, 0.1)"; ctx.fillRect(0, 0, width, height);
+        }
         requestAnimationFrame(draw);
         update();
     }
-
-    init();
-    draw();
-
+    init(); draw();
 </script>
 </body>
 </html>
