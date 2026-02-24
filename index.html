@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=landscape">
-    <title>Spider Nest Defender - Wildlife Edition</title>
+    <title>Spider Nest Defender</title>
     <style>
         :root {
             --forest-dark: #1a2f1a;
@@ -135,6 +135,13 @@
             text-align: center;
             padding: 20px;
         }
+        
+        #sharpness-display {
+            font-weight: bold;
+            color: #8a2be2;
+            font-size: 14px;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
@@ -151,6 +158,7 @@
                 <div class="stat-box">
                     <span>NÍVEL</span>
                     <span id="player-lvl" class="level-badge">1</span>
+                    <span id="sharpness-display">Afiação: 0</span>
                 </div>
                 <div class="stat-box">
                     <div id="rain-status">ESTÁ A CHOVER!</div>
@@ -184,6 +192,7 @@
     const eggHpEl = document.getElementById('egg-hp-display');
     const rainStatusEl = document.getElementById('rain-status');
     const msgBox = document.getElementById('msg-box');
+    const sharpnessEl = document.getElementById('sharpness-display');
 
     let width, height;
     let player, enemies, bots;
@@ -199,6 +208,9 @@
     let playerVelX = 0;
     let playerVelY = 0;
     let frogTongues = [];
+    
+    let goldenDragonflySpawnedCount = 0;
+    let gameStartTime = Date.now();
 
     const SPECIES = [
         { name: 'Mosca', color: '#555', speedMult: 1.2, hpMult: 0.8, weight: 40, type: 'fly' },
@@ -210,7 +222,11 @@
         { name: 'Treme-Treme', color: '#add8e6', speedMult: 2.5, hpMult: 0.5, weight: 10, type: 'shaker' },
         { name: 'Vespa Cavalo do Cão', color: '#ff4500', speedMult: 1.4, hpMult: 4.0, weight: 8, type: 'tarantula_hawk' },
         { name: 'Sapo', color: '#4d7c0f', speedMult: 0.6, hpMult: 0.5, weight: 12, type: 'frog' },
-        { name: 'Chicken Jockey', color: '#ffffff', speedMult: 2.2, hpMult: 1.2, weight: 0.5, type: 'chicken_jockey' }
+        { name: 'Chicken Jockey', color: '#ffffff', speedMult: 2.2, hpMult: 1.2, weight: 0.5, type: 'chicken_jockey' },
+        { name: 'Libélula', color: '#00ced1', speedMult: 0.9, hpMult: 1.8, weight: 10, type: 'dragonfly' },
+        { name: 'Treme-Treme Vermelha', color: '#ff0000', speedMult: 2.5, hpMult: 0.5, weight: 0.5, type: 'shaker' },
+        { name: 'Libélula Dourada', color: '#ffd700', speedMult: 1.5, hpMult: 2.5, weight: 0, type: 'golden_dragonfly' },
+        { name: 'Corvo', color: '#000000', speedMult: 1.1, hpMult: 6.0, weight: 0.2, type: 'raven' }
     ];
 
     function init() {
@@ -226,7 +242,8 @@
             maxHp: 100,
             speed: 4,
             xp: 0,
-            angle: 0
+            angle: 0,
+            sharpness: 0
         };
         playerVelX = 0;
         playerVelY = 0;
@@ -239,6 +256,8 @@
         gameActive = true;
         isRaining = false;
         rainTimer = 0;
+        goldenDragonflySpawnedCount = 0;
+        gameStartTime = Date.now();
         msgBox.style.display = 'none';
         for(let i=0; i<6; i++) spawnEnemy();
     }
@@ -275,7 +294,7 @@
         return SPECIES[0];
     }
 
-    function spawnEnemy() {
+    function spawnEnemy(forcedSpecies = null) {
         const side = Math.floor(Math.random() * 4);
         let x, y;
         if (side === 0) { x = -50; y = Math.random() * height; }
@@ -283,18 +302,34 @@
         else if (side === 2) { x = Math.random() * width; y = -50; }
         else { x = Math.random() * width; y = height + 50; }
 
-        const species = getRandomSpecies();
+        const species = forcedSpecies || getRandomSpecies();
         const level = Math.max(1, Math.floor(player.level + (Math.random() * 5 - 2)));
+        
+        let sharpness = 0;
+        // Chance baseada na raridade e no nível do jogador
+        let baseSharpChance = player.sharpness >= 2 ? 0.4 : 0.15; 
+        const randEnc = Math.random();
+        
+        if (randEnc < baseSharpChance) {
+            if (randEnc < baseSharpChance * 0.05) sharpness = 4; // Nova Afiação 4 (muito rara)
+            else if (randEnc < baseSharpChance * 0.1) sharpness = 3; 
+            else if (randEnc < baseSharpChance * 0.3) sharpness = 2; 
+            else sharpness = 1; 
+        }
+
         enemies.push({
             x, y,
             level,
             species: species,
-            radius: 12 + (level * 1.5),
-            speed: (0.7 + Math.random() * 1) * species.speedMult,
+            radius: (species.type === 'raven' ? 25 : 12) + (level * 1.5),
+            speed: (0.7 + Math.random() * 1) * species.speedMult * (player.sharpness === 2 ? 1.3 : 1.0),
             angle: 0,
             hp: (10 + (level * 8)) * species.hpMult,
             aggroPlayer: false,
-            lastAtk: 0
+            lastAtk: 0,
+            sharpness: sharpness,
+            carrying: null,
+            preyCooldown: 0 
         });
     }
 
@@ -358,6 +393,21 @@
 
         ctx.save();
         ctx.translate(enemy.x + offsetX, enemy.y + offsetY);
+        
+        if (enemy.sharpness > 0) {
+            let glowColor = 'rgba(138, 43, 226, 0.6)';
+            if (enemy.sharpness === 4) glowColor = 'rgba(255, 0, 255, 0.8)';
+            
+            const glowSize = enemy.radius * (1.2 + Math.sin(Date.now() * 0.01) * 0.2);
+            const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, glowSize * 1.5);
+            gradient.addColorStop(0, glowColor);
+            gradient.addColorStop(1, 'rgba(138, 43, 226, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(0, 0, glowSize * 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
         ctx.rotate(enemy.angle);
         const r = enemy.radius;
         const type = enemy.species.type;
@@ -405,21 +455,61 @@
             ctx.fillStyle = 'red'; ctx.fillRect(r*0.7, -r*0.8, r*0.2, r*0.2);
             ctx.fillStyle = '#2e8b57'; ctx.fillRect(-r*0.3, -r*1.2, r*0.6, r*0.7);
             ctx.fillStyle = '#3a5fbd'; ctx.fillRect(-r*0.2, -r*0.5, r*0.4, r*0.3);
+        } else if (type === 'dragonfly' || type === 'golden_dragonfly') { 
+            ctx.fillStyle = enemy.species.color; ctx.fillRect(-r*0.2, -r, r*0.4, r*2.2);
+            ctx.fillStyle = type === 'golden_dragonfly' ? 'rgba(255, 215, 0, 0.4)' : 'rgba(173, 216, 230, 0.6)';
+            const wAnim = Math.sin(Date.now() * 0.04) * 0.3;
+            ctx.beginPath(); ctx.ellipse(-r*1.2, -r*0.3, r*1.5, r*0.4, wAnim, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(r*1.2, -r*0.3, r*1.5, r*0.4, -wAnim, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(-r*1.0, r*0.3, r*1.2, r*0.3, wAnim*0.8, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(r*1.0, r*0.3, r*1.2, r*0.3, -wAnim*0.8, 0, Math.PI*2); ctx.fill();
+        } else if (type === 'raven') {
+            ctx.fillStyle = '#000';
+            ctx.beginPath(); ctx.ellipse(0, 0, r*1.3, r*0.7, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(r*0.8, -r*0.2, r*0.4, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#444';
+            ctx.beginPath(); ctx.moveTo(r*1.1, -r*0.3); ctx.lineTo(r*1.8, -r*0.1); ctx.lineTo(r*1.1, 0); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#111';
+            const wingAnim = Math.sin(Date.now() * 0.01) * 0.5;
+            ctx.beginPath(); ctx.ellipse(-r*0.2, -r*0.3, r*1.8, r*0.8, -0.4 + wingAnim, 0, Math.PI*2); ctx.fill();
         } else {
             ctx.fillStyle = enemy.species.color; ctx.beginPath(); ctx.ellipse(0, 0, r, r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
         }
         
-        if (type !== 'ladybug' && type !== 'beetle' && type !== 'centipede' && type !== 'shaker' && type !== 'tarantula_hawk' && type !== 'frog' && type !== 'chicken_jockey') {
+        if (enemy.carrying) {
+            ctx.save();
+            ctx.translate(0, r * 1.2);
+            ctx.scale(0.5, 0.5);
+            const dummy = { ...enemy.carrying, x: 0, y: 0, angle: 0, sharpness: 0 };
+            drawEnemy(dummy);
+            ctx.restore();
+        }
+
+        if (type !== 'ladybug' && type !== 'beetle' && type !== 'centipede' && type !== 'shaker' && type !== 'tarantula_hawk' && type !== 'frog' && type !== 'chicken_jockey' && type !== 'dragonfly' && type !== 'golden_dragonfly' && type !== 'raven') {
             ctx.fillStyle = "rgba(255,255,255,0.3)"; const wingAnim = Math.sin(Date.now() * 0.05) * 0.5;
             ctx.beginPath(); ctx.ellipse(0, -r*0.8, r * (1+wingAnim), r * 0.4, 0, 0, Math.PI*2); ctx.fill();
         }
         ctx.restore();
         ctx.fillStyle = enemy.level > player.level ? "#ff4444" : "#44ff44"; ctx.font = "bold 14px Arial"; ctx.textAlign = "center";
-        ctx.fillText("Lvl " + enemy.level, enemy.x + offsetX, enemy.y + r + 15 + offsetY);
+        
+        let label = (type === 'raven' ? '★ ' : '') + "Lvl " + enemy.level;
+        if (enemy.sharpness > 0) label += " [Afiação " + enemy.sharpness + "]";
+        ctx.fillText(label, enemy.x + offsetX, enemy.y + r + 15 + offsetY);
     }
 
     function update() {
         if (!gameActive) return;
+        
+        const elapsedSecs = (Date.now() - gameStartTime) / 1000;
+        if (elapsedSecs > 120 && goldenDragonflySpawnedCount < 3) {
+            const currentMinute = Math.floor(elapsedSecs / 60);
+            const lastMinute = Math.floor((elapsedSecs - (1/60)) / 60);
+            if (currentMinute > lastMinute) {
+                spawnEnemy(SPECIES.find(s => s.type === 'golden_dragonfly'));
+                goldenDragonflySpawnedCount++;
+            }
+        }
+
         rainTimer++;
         if (rainTimer > 1500) { isRaining = !isRaining; rainTimer = 0; rainStatusEl.style.display = isRaining ? "block" : "none"; }
         if (isRaining) {
@@ -429,11 +519,14 @@
 
         const dx = player.targetX - player.x; const dy = player.targetY - player.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
+        
+        let pSpeed = player.speed * (player.sharpness === 3 ? 1.8 : 1.0);
+
         if (isRaining) {
             if (dist > 5) { playerVelX += (dx/dist)*0.15; playerVelY += (dy/dist)*0.15; }
             playerVelX *= 0.985; playerVelY *= 0.985;
         } else {
-            if (dist > 5) { playerVelX = (dx/dist)*player.speed; playerVelY = (dy/dist)*player.speed; }
+            if (dist > 5) { playerVelX = (dx/dist)*pSpeed; playerVelY = (dy/dist)*pSpeed; }
             else { playerVelX *= 0.5; playerVelY *= 0.5; }
         }
         player.x += playerVelX; player.y += playerVelY;
@@ -441,19 +534,62 @@
         if(player.x < 0) player.x = 0; if(player.x > width) player.x = width; if(player.y < 0) player.y = 0; if(player.y > height) player.y = height;
 
         enemies.forEach((en, index) => {
-            let tX = width/2; let tY = height/2;
+            let tX = player.x; let tY = player.y;
             let currentS = en.speed; if (isRaining) currentS *= 0.55;
 
-            if (en.species.type === 'tarantula_hawk' && !en.aggroPlayer) {
+            if (en.species.type === 'golden_dragonfly') {
+                const dP = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
+                if (dP < 300) {
+                    const ang = Math.atan2(en.y - player.y, en.x - player.x);
+                    tX = en.x + Math.cos(ang) * 100;
+                    tY = en.y + Math.sin(ang) * 100;
+                } else {
+                    tX = en.x + Math.cos(en.angle) * 10;
+                    tY = en.y + Math.sin(en.angle) * 10;
+                }
+            }
+            else if (en.species.type === 'dragonfly' || en.species.type === 'raven') {
+                if (en.preyCooldown > 0) en.preyCooldown--; 
+                if (!en.carrying) {
+                    if (en.preyCooldown <= 0) { 
+                        let closestPrey = null;
+                        let minDist = 600;
+                        enemies.forEach(other => {
+                            if (other !== en && other.species.type !== 'dragonfly' && other.species.type !== 'raven' && other.species.type !== 'frog' && other.species.type !== 'golden_dragonfly') {
+                                const d = Math.sqrt((en.x - other.x)**2 + (en.y - other.y)**2);
+                                if (d < minDist) { minDist = d; closestPrey = other; }
+                            }
+                        });
+                        if (closestPrey) {
+                            tX = closestPrey.x; tY = closestPrey.y;
+                            if (minDist < en.radius + closestPrey.radius) {
+                                en.carrying = { ...closestPrey };
+                                enemies.splice(enemies.indexOf(closestPrey), 1);
+                            }
+                        }
+                    }
+                } else {
+                    tX = player.x; tY = player.y;
+                    const dP = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
+                    if (dP < 150) {
+                        en.carrying.x = en.x;
+                        en.carrying.y = en.y;
+                        enemies.push(en.carrying);
+                        en.carrying = null;
+                        en.preyCooldown = en.species.type === 'raven' ? 60 : 180; 
+                    }
+                }
+            }
+            else if (en.species.type === 'tarantula_hawk' && !en.aggroPlayer) {
                 tX = width - 60; tY = height - 60;
                 const dE = Math.sqrt((en.x - tX)**2 + (en.y - tY)**2);
                 if (dE < en.radius + 30) { 
                     eggHealth -= 0.05; 
                     tX = en.x; tY = en.y;
-                    // Correção do Bug: Se a vida dos ovos acabar, o jogo termina
                     if (eggHealth <= 0) { eggHealth = 0; gameOver(); }
                 }
-            } else if (en.species.type === 'frog') {
+            } 
+            else if (en.species.type === 'frog') {
                 const dP = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
                 if (dP < 300) {
                     tX = en.x; tY = en.y;
@@ -463,7 +599,7 @@
                         en.lastAtk = Date.now();
                     }
                 } else { tX = player.x; tY = player.y; }
-            } else { tX = player.x; tY = player.y; }
+            }
             
             const edx = tX - en.x; const edy = tY - en.y; const edist = Math.sqrt(edx*edx + edy*edy);
             if (edist > 2) { en.x += (edx/edist)*currentS; en.y += (edy/edist)*currentS; en.angle = Math.atan2(edy, edx); }
@@ -471,18 +607,51 @@
             const pdist = Math.sqrt((en.x - player.x)**2 + (en.y - player.y)**2);
             if (pdist < player.radius + en.radius) {
                 if (player.level >= en.level) {
-                    player.xp += en.level * 15; enemies.splice(index, 1);
+                    player.xp += en.level * 15;
+                    
+                    if (en.species.type === 'golden_dragonfly') {
+                        if (player.sharpness < 3) {
+                            player.sharpness++;
+                            if (player.sharpness === 1) { player.maxHp = 80; player.hp = Math.min(player.hp, 80); }
+                            else { player.maxHp = 100; }
+                        }
+                    }
+                    
+                    enemies.splice(index, 1);
                     if (player.xp >= player.level * 60) { player.level++; player.xp = 0; player.speed = Math.min(7, player.speed + 0.15); }
                 } else {
                     if (en.species.type === 'tarantula_hawk') en.aggroPlayer = true;
-                    player.hp -= 0.8; if (player.hp <= 0) gameOver();
+                    
+                    // Lógica de Chute (Afiação 4)
+                    if (en.sharpness === 4) {
+                        const ang = Math.atan2(player.y - en.y, player.x - en.x);
+                        playerVelX += Math.cos(ang) * 15;
+                        playerVelY += Math.sin(ang) * 15;
+                    }
+
+                    let damage = 0.8;
+                    if (en.sharpness === 1) damage = 1.5;
+                    else if (en.sharpness === 2) damage = 50.0; 
+                    else if (en.sharpness === 3) damage = 100.0; 
+                    else if (en.sharpness === 4) damage = 120.0; 
+                    
+                    if (player.sharpness === 3) damage *= 3;
+                    
+                    player.hp -= damage; 
+                    if (player.hp <= 0) { player.hp = 0; gameOver(); }
                 }
             }
         });
 
         frogTongues.forEach((t, i) => {
             t.x += t.vx; t.y += t.vy; t.life--;
-            if (Math.sqrt((t.x-player.x)**2 + (t.y-player.y)**2) < player.radius) { player.hp -= 3; frogTongues.splice(i, 1); if(player.hp <= 0) gameOver(); }
+            if (Math.sqrt((t.x-player.x)**2 + (t.y-player.y)**2) < player.radius) { 
+                let dmg = 3;
+                if (player.sharpness === 3) dmg *= 3;
+                player.hp -= dmg; 
+                frogTongues.splice(i, 1); 
+                if(player.hp <= 0) gameOver(); 
+            }
             if (t.life <= 0) frogTongues.splice(i, 1);
         });
 
@@ -500,7 +669,10 @@
         });
 
         if (enemies.length < 6 + player.level && Math.random() < 0.03) spawnEnemy();
-        currentTime -= (1/60);
+        
+        let timerSpeed = player.sharpness === 1 ? 2.5 : 1.0;
+        currentTime -= (1/60) * timerSpeed;
+        
         if (currentTime <= 0) {
             let nS = Math.ceil(3 * (eggHealth / eggMaxHealth)); for(let i=0; i<nS; i++) spawnBot();
             currentTime = eggTime; eggHealth = eggMaxHealth; 
@@ -511,6 +683,7 @@
     function updateUI() {
         playerLvlEl.innerText = player.level; playerHpEl.innerText = Math.max(0, Math.ceil(player.hp)) + "%";
         eggHpEl.innerText = "Ovos: " + Math.ceil(eggHealth) + "%";
+        sharpnessEl.innerText = "Afiação: " + player.sharpness;
         const m = Math.floor(currentTime/60); const s = Math.floor(currentTime%60);
         timerDisplay.innerText = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         botCountEl.innerText = "Mini-aranhas: " + bots.length;
@@ -528,7 +701,10 @@
         enemies.forEach(drawEnemy);
         frogTongues.forEach(t => { ctx.fillStyle = "#ff6666"; ctx.beginPath(); ctx.arc(t.x, t.y, 4, 0, Math.PI*2); ctx.fill(); });
         bots.forEach(b => drawSpider(b.x, b.y, b.radius, b.angle, "#888"));
-        drawSpider(player.x, player.y, player.radius, player.angle);
+        
+        let spiderColor = player.sharpness === 3 ? "#ffd700" : "black";
+        drawSpider(player.x, player.y, player.radius, player.angle, spiderColor);
+        
         if (isRaining) {
             ctx.strokeStyle = "rgba(174, 194, 255, 0.4)"; ctx.lineWidth = 1;
             rainDrops.forEach(d => { ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x, d.y + 12); ctx.stroke(); });
